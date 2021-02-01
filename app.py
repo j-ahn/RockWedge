@@ -23,7 +23,7 @@ from mplstereonet import plane_intersection, plunge_bearing2pole, rake
 external_stylesheets = ["https://codepen.io/chriddyp/pen/bWLwgP.css"]
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 server = app.server
-app.title = 'AusCovidDash'
+app.title = 'Rock Wedge'
 
 colors = {
     'background': '#000000',
