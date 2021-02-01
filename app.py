@@ -16,8 +16,10 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 import numpy as np
+from scipy.spatial import Delaunay
+from scipy.optimize import linprog
 import mplstereonet
-from mplstereonet import plane_intersection, plunge_bearing2pole, rake
+from mplstereonet.stereonet_math import plane_intersection, plunge_bearing2pole, pole, rake, plane, geographic2pole
 
 # Initiate the app
 external_stylesheets = ["https://codepen.io/chriddyp/pen/bWLwgP.css"]
@@ -31,6 +33,106 @@ colors = {
     'label': '#f5b112'
 }
 
+
+def alpha_shape(points, alpha, only_outer=True):
+    """
+    Compute the alpha shape (concave hull) of a set of points.
+    :param points: np.array of shape (n,2) points.
+    :param alpha: alpha value.
+    :param only_outer: boolean value to specify if we keep only the outer border
+    or also inner edges.
+    :return: set of (i,j) pairs representing edges of the alpha-shape. (i,j) are
+    the indices in the points array.
+    """
+    assert points.shape[0] > 3, "Need at least four points"
+
+    def add_edge(edges, i, j):
+        """
+        Add an edge between the i-th and j-th points,
+        if not in the list already
+        """
+        if (i, j) in edges or (j, i) in edges:
+            # already added
+            assert (j, i) in edges, "Can't go twice over same directed edge right?"
+            if only_outer:
+                # if both neighboring triangles are in shape, it's not a boundary edge
+                edges.remove((j, i))
+            return
+        edges.add((i, j))
+
+    tri = Delaunay(points)
+    edges = set()
+    # Loop over triangles:
+    # ia, ib, ic = indices of corner points of the triangle
+    for ia, ib, ic in tri.vertices:
+        pa = points[ia]
+        pb = points[ib]
+        pc = points[ic]
+        # Computing radius of triangle circumcircle
+        # www.mathalino.com/reviewer/derivation-of-formulas/derivation-of-formula-for-radius-of-circumcircle
+        a = np.sqrt((pa[0] - pb[0]) ** 2 + (pa[1] - pb[1]) ** 2)
+        b = np.sqrt((pb[0] - pc[0]) ** 2 + (pb[1] - pc[1]) ** 2)
+        c = np.sqrt((pc[0] - pa[0]) ** 2 + (pc[1] - pa[1]) ** 2)
+        s = (a + b + c) / 2.0
+        area = np.sqrt(s * (s - a) * (s - b) * (s - c))
+        circum_r = a * b * c / (4.0 * area)
+        if circum_r < alpha:
+            add_edge(edges, ia, ib)
+            add_edge(edges, ib, ic)
+            add_edge(edges, ic, ia)
+    return edges
+
+def find_edges_with(i, edge_set):
+    i_first = [j for (x,j) in edge_set if x==i]
+    i_second = [j for (j,x) in edge_set if x==i]
+    return i_first,i_second
+
+def stitch_boundaries(edges):
+    edge_set = edges.copy()
+    boundary_lst = []
+    while len(edge_set) > 0:
+        boundary = []
+        edge0 = edge_set.pop()
+        boundary.append(edge0)
+        last_edge = edge0
+        while len(edge_set) > 0:
+            i,j = last_edge
+            j_first, j_second = find_edges_with(j, edge_set)
+            if j_first:
+                edge_set.remove((j, j_first[0]))
+                edge_with_j = (j, j_first[0])
+                boundary.append(edge_with_j)
+                last_edge = edge_with_j
+            elif j_second:
+                edge_set.remove((j_second[0], j))
+                edge_with_j = (j, j_second[0])  # flip edge rep
+                boundary.append(edge_with_j)
+                last_edge = edge_with_j
+
+            if edge0[0] == last_edge[1]:
+                break
+
+        boundary_lst.append(boundary)
+    return boundary_lst
+
+def norm_ang(ang):
+    return (360 + ang % 360) % 360
+
+def ang_between(n, a, b):
+    n = norm_ang(n)
+    a = (3600000 + a) % 360
+    b = (3600000 + b) % 360
+    
+    if (a < b):
+        if a <= n and n <= b:
+            return True
+        else:
+            return False
+    elif a<= n or n <= b:
+        return True
+    else:
+        return False
+        
 def dipdir2strike(dd):
     strike = dd - 90
     if strike < 0:
@@ -65,7 +167,15 @@ def get_contour_verts(cn):
         contours.append(paths)
 
     return contours
-    
+
+def in_hull(points, x):
+    n_points = len(points)
+    c = np.zeros(n_points)
+    A = np.r_[points.T,np.ones((1,n_points))]
+    b = np.r_[x, np.ones(1)]
+    lp = linprog(c, A_eq=A, b_eq=b)
+    return lp.success
+
 def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
     
     """ 
@@ -97,37 +207,99 @@ def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
         ax.rake(x, y, 90, color=colours[i], marker='o',markersize=10, alpha=1, zorder=5)
         i = i + 1
     
-    # Stereonet overlay settings
-    ax.set_azimuth_ticks([0,90,180,270],labels=['N','E','S','W'])
-    
-    # angle = np.linspace(0,360,36,False)
-    # for i in angle:
-    #     ax.pole([i,i],[10,90],'silver','-', zorder=1)
-    #     angle2 = np.linspace(10,90,8,False)
-    #     for i in angle2:
-    #         ax.cone(plunge=90, bearing=20, angle=i, facecolors='none', edgecolors='silver', bidirectional=False, zorder=1)
-
     # Plane intersections   
-    ints = plane_intersection([strikes[0],strikes[0],strikes[1]],[Dip[0],Dip[0],Dip[1]],[strikes[1],strikes[2],strikes[2]],[Dip[1],Dip[2],Dip[2]])
-    ints_conv = plunge_bearing2pole(ints[0],ints[1])
-    ax.pole(ints_conv[0],ints_conv[1], color='k', marker='o', markersize='10')
+    plunge, bearing = plane_intersection([strikes[0],strikes[0],strikes[1]],[Dip[0],Dip[0],Dip[1]],[strikes[1],strikes[2],strikes[2]],[Dip[1],Dip[2],Dip[2]])
+    plunge = [x for x in plunge]
+    bearing = [x for x in bearing]
+    ax.line(plunge, bearing, color='k', marker='o', markersize='10')
     
+    # Convert plane intersections as poles (strike/dip)
+    int_strike, int_dip = plunge_bearing2pole(plunge, bearing)
+    int_strike = [x for x in int_strike]
+    int_dip = [x - 0.001 for x in int_dip]
+    joint_strikes = [x + 180 for x in strikes]
+    joint_dips = [90- x for x in Dip]
+    point_strikes = joint_strikes + int_strike
+    point_dips = joint_dips + int_dip
+    real_dips = Dip + plunge
+    
+    # Wedge Shaded area
+    intersects = [[0,1],[0,2],[1,2]]
+    j_inside_strikes = []
+    j_inside_dips = []
+    for joint, intersect in enumerate(intersects):
+        j_plane = plane(strikes[joint],Dip[joint])
+        j_plane = np.vstack((j_plane[0].T,j_plane[1].T))
+        
+        j_plane_poles = geographic2pole(j_plane[0], j_plane[1])
+        
+        int1 = int_strike[intersect[0]]
+        int2 = int_strike[intersect[1]]
+        int_diff = int1-int2
+        
+        if int_diff >= -180 and int_diff < 0 or int_diff > 180:
+            ints_ordered = [int1, int2]
+        elif int_diff <= 180 and int_diff > 0 or int_diff < -180:
+            ints_ordered = [int2, int1]
+        
+        j_inside_strike = []
+        j_inside_dip = []
+        
+        for i, x in enumerate(j_plane_poles[0]):
+            if ang_between(x, ints_ordered[0], ints_ordered[1]):
+                j_inside_strike.append(j_plane_poles[0][i])
+                j_inside_dip.append(j_plane_poles[1][i])
+        
+        j_inside_strikes.append(j_inside_strike)
+        j_inside_dips.append(j_inside_dip)
+        
+        #ax.pole(j_inside_strike, j_inside_dip, color=colours[joint])
+    
+    j_inside_strikes = j_inside_strikes[0] + j_inside_strikes[1] + j_inside_strikes[2]
+    j_inside_dips = j_inside_dips[0] + j_inside_dips[1] + j_inside_dips[2]
+
     # Friction circle
     ax.cone(90,0,90-FrictionAngle, alpha=0.1, color='r', zorder=1, bidirectional=False)
     
+    # Stereonet overlay settings
+    ax.set_azimuth_ticks([0,90,180,270],labels=['N','E','S','W'])
     ax.grid(True, kind='polar')
     plt.tight_layout()
     
-    Dips = [Dip, 90-ints_conv[1]]
+    # Shaded Area
+    shaded_area = pole(j_inside_strikes, j_inside_dips)
+    shaded_area_x = [x for x in shaded_area[0]]
+    shaded_area_y = [x for x in shaded_area[1]]
+    shaded_area_stack = np.vstack((shaded_area_x,shaded_area_y)).T
+    
+    edges = alpha_shape(shaded_area_stack, alpha=1, only_outer=True)
+    edges_joined = stitch_boundaries(edges)
+    edges_joined_x = []
+    edges_joined_y = []
+    print(edges_joined)
+    for i, j in edges_joined[0]:
+        edges_joined_x.append(shaded_area_x[i])
+        edges_joined_y.append(shaded_area_y[i])
+    ax.fill(edges_joined_x,edges_joined_y, 'k', alpha=0.3)
+    
     Joints = ['1','2','3','1/2','1/3','2/3']
     
-    if np.max(Dips) >= FrictionAngle:
+    Stability = "Stable"
+    Mode = 'N/A'
+        
+    if in_hull(shaded_area_stack, np.array([0,0])):
         Stability = 'Unstable'
-        Mode = "Sliding on Joint {0}".format(Joints[np.argmax(Dips)])
+        Mode = 'Falling'
     else:
-        Stability = 'Stable'
-        Mode = 'N/A'
-    
+        poles_ext = pole(point_strikes, [d+1 for d in point_dips])
+        poles_ext = np.vstack((poles_ext[0],poles_ext[1])).T    
+        max_slide = 0
+        for i in range(0,6):
+            if in_hull(shaded_area_stack, poles_ext[i]) and real_dips[i] >= FrictionAngle and real_dips[i] > max_slide:
+                Stability = 'Unstable'
+                max_slide = real_dips[i]
+                Mode = "Sliding on Joint {0}".format(Joints[i])
+
     # Table in top plot
     table_data=[
         ["Friction Angle", "{0}°".format(FrictionAngle)],
@@ -135,16 +307,17 @@ def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
         ["1", "{0}°/{1:0=3d}°".format(int(round(Dip[0])),int(round(DipDirection[0])))],
         ["2", "{0}°/{1:0=3d}°".format(int(round(Dip[1])),int(round(DipDirection[1])))],
         ["3", "{0}°/{1:0=3d}°".format(int(round(Dip[2])),int(round(DipDirection[2])))],
-        ["1/2", "{0}°/{1:0=3d}°".format(int(90-round(ints_conv[1][0])), int(round(strike2dipdir(ints_conv[0][0]))))],
-        ["1/3", "{0}°/{1:0=3d}°".format(int(90-round(ints_conv[1][1])), int(round(strike2dipdir(ints_conv[0][1]))))],
-        ["2/3", "{0}°/{1:0=3d}°".format(int(90-round(ints_conv[1][2])), int(round(strike2dipdir(ints_conv[0][2]))))],
+        ["Intersections", "Trend / Plunge"],
+        ["1/2", "{0}°/{1:0=3d}°".format(int(round(plunge[0])), int(round(bearing[0])))],
+        ["1/3", "{0}°/{1:0=3d}°".format(int(round(plunge[1])), int(round(bearing[1])))],
+        ["2/3", "{0}°/{1:0=3d}°".format(int(round(plunge[2])), int(round(bearing[2])))],
         ["Stability", Stability],
         ["Mode", Mode]
         ]
     
     table = ax.table(cellText=table_data, bbox = [1.1, 0.3, 0.4, 0.35], cellLoc='center', loc='right', colWidths=[0.2,0.2])# , loc='top right')#, colWidths = [0.4]*2)
     for (row, col), cell in table.get_celld().items():
-        if (row == 0 or row ==1 or row == 8 or row == 9):
+        if (row == 0 or row ==1 or row == 5 or row == 9 or row == 10):
             cell.set_text_props(fontproperties=FontProperties(weight='bold'))
         if (row == 2):
             cell.set_text_props(color='r')
@@ -158,21 +331,20 @@ def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
 
 # Server
 app.layout = html.Div([
-    html.H1(children='Kinematic Analysis of Underground Rock Wedge',
+    html.H3(children='Kinematic Analysis of Underground Rock Wedge',
             style={'textAlign': 'center','font-family':'Verdana','color': colors['text'],'padding-top': 20}),
-    html.P(children='''Joint Orientations (Dip / Dip Direction)''',
-           style={'textAlign': 'center','font-size':24,'font-family':'Verdana','color': colors['text'],'padding-bottom': 10}),
-    html.Div([html.Label(["Joint 1",dcc.Input(id='joint1_dip-state', type='number', min=1, max=89, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'}),dcc.Input(id='joint1_dd-state', type='number', min=0, max=359, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'})])],
+    html.Div([html.Label(["Joint 1 (Dip / Dip Direction)",dcc.Input(id='joint1_dip-state', type='number', min=1, max=89, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'}),dcc.Input(id='joint1_dd-state', type='number', min=0, max=359, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'})])],
          style={'vertical-align':'middle','margin-top':'10px','font-size':10,'font-family':'Verdana','textAlign':'center','color':colors['text']}),
-    html.Div([html.Label(["Joint 2",dcc.Input(id='joint2_dip-state', type='number', min=1, max=89, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'}),dcc.Input(id='joint2_dd-state', type='number', min=0, max=359, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'})])],
+    html.Div([html.Label(["Joint 2 (Dip / Dip Direction)",dcc.Input(id='joint2_dip-state', type='number', min=1, max=89, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'}),dcc.Input(id='joint2_dd-state', type='number', min=0, max=359, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'})])],
          style={'vertical-align':'middle','margin-top':'10px','font-size':10,'font-family':'Verdana','textAlign':'center','color':colors['text']}),
-    html.Div([html.Label(["Joint 3",dcc.Input(id='joint3_dip-state', type='number', min=1, max=89, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'}),dcc.Input(id='joint3_dd-state', type='number', min=0, max=359, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'})])],
+    html.Div([html.Label(["Joint 3 (Dip / Dip Direction)",dcc.Input(id='joint3_dip-state', type='number', min=1, max=89, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'}),dcc.Input(id='joint3_dd-state', type='number', min=0, max=359, style={'width': '80px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'})])],
          style={'vertical-align':'middle','margin-top':'10px','font-size':10,'font-family':'Verdana','textAlign':'center','color':colors['text']}),
     html.Div([html.Label(["Friction Angle (°)",dcc.Input(id='fric_ang-state', type='number', min=1, max=89, value=30, style={'width': '50px', 'display':'inline-block', 'margin-left':'10px','vertical-align':'middle'})])],
          style={'vertical-align':'middle','margin-top':'10px','font-size':10,'font-family':'Verdana','textAlign':'center','color':colors['text']}),
     html.Div([html.Button('Update Stereonet', id='update_button-state', n_clicks=0)],
              style={'vertical-align':'middle','margin-top':'10px','font-size':10,'font-family':'Verdana','textAlign':'center','color':colors['text']}),
-    html.Div(html.Img(id='graph',style={'width':'60%'}),style={'vertical-align':'middle', 'textAlign':'center'}),
+    html.Div(html.P([html.Br()])),
+    html.Div(html.Img(id='graph',style={'width':'40%'}),style={'vertical-align':'middle', 'textAlign':'center'}),
     html.Div(dcc.Markdown('''
        
     _Created by : Jiwoo Ahn_
@@ -199,14 +371,12 @@ def update_figure(n_clicks, joint1_dip, joint2_dip, joint3_dip, joint1_dd, joint
     if n_clicks > 0 and joint1_dip and joint1_dd and joint2_dip and joint2_dd and joint3_dip and joint3_dd and fric_ang:
         Dip = [joint1_dip, joint2_dip, joint3_dip]
         DipDirection = [joint1_dd, joint2_dd, joint3_dd]
-        print(Dip)
-        print(DipDirection)
         FrictionAngle = fric_ang
         
         # Stereonet on data
         stereofig, stereoax = stereoplot(Dip, DipDirection, FrictionAngle, (10,10))
         buf = io.BytesIO() # in-memory files
-        stereofig.savefig(buf, format = "png", dpi=200, bbox_inches = "tight") # save to the above file object
+        stereofig.savefig(buf, format = "png", dpi=300, bbox_inches = "tight") # save to the above file object
         data = base64.b64encode(buf.getbuffer()).decode("utf8") # encode to html elements
         plt.close()
         return "data:image/png;base64,{}".format(data)
