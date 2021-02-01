@@ -168,13 +168,46 @@ def get_contour_verts(cn):
 
     return contours
 
-def in_hull(points, x):
-    n_points = len(points)
-    c = np.zeros(n_points)
-    A = np.r_[points.T,np.ones((1,n_points))]
-    b = np.r_[x, np.ones(1)]
-    lp = linprog(c, A_eq=A, b_eq=b)
-    return lp.success
+def point_inside_polygon(x, y, poly, include_edges=True):
+    '''
+    Test if point (x,y) is inside polygon poly.
+
+    poly is N-vertices polygon defined as 
+    [(x1,y1),...,(xN,yN)] or [(x1,y1),...,(xN,yN),(x1,y1)]
+    (function works fine in both cases)
+
+    Geometrical idea: point is inside polygon if horisontal beam
+    to the right from point crosses polygon even number of times. 
+    Works fine for non-convex polygons.
+    '''
+    n = len(poly)
+    inside = False
+
+    p1x, p1y = poly[0]
+    for i in range(1, n + 1):
+        p2x, p2y = poly[i % n]
+        if p1y == p2y:
+            if y == p1y:
+                if min(p1x, p2x) <= x <= max(p1x, p2x):
+                    # point is on horisontal edge
+                    inside = include_edges
+                    break
+                elif x < min(p1x, p2x):  # point is to the left from current edge
+                    inside = not inside
+        else:  # p1y!= p2y
+            if min(p1y, p2y) <= y <= max(p1y, p2y):
+                xinters = (y - p1y) * (p2x - p1x) / float(p2y - p1y) + p1x
+
+                if x == xinters:  # point is right on the edge
+                    inside = include_edges
+                    break
+
+                if x < xinters:  # point is to the left from current edge
+                    inside = not inside
+
+        p1x, p1y = p2x, p2y
+
+    return inside
 
 def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
     
@@ -276,18 +309,20 @@ def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
     edges_joined = stitch_boundaries(edges)
     edges_joined_x = []
     edges_joined_y = []
-    print(edges_joined)
+
     for i, j in edges_joined[0]:
         edges_joined_x.append(shaded_area_x[i])
         edges_joined_y.append(shaded_area_y[i])
+    polygon = np.vstack((edges_joined_x,edges_joined_y)).T
+
     ax.fill(edges_joined_x,edges_joined_y, 'k', alpha=0.3)
     
     Joints = ['1','2','3','1/2','1/3','2/3']
     
     Stability = "Stable"
     Mode = 'N/A'
-        
-    if in_hull(shaded_area_stack, np.array([0,0])):
+    
+    if point_inside_polygon(0, 0, polygon):
         Stability = 'Unstable'
         Mode = 'Falling'
     else:
@@ -295,7 +330,7 @@ def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
         poles_ext = np.vstack((poles_ext[0],poles_ext[1])).T    
         max_slide = 0
         for i in range(0,6):
-            if in_hull(shaded_area_stack, poles_ext[i]) and real_dips[i] >= FrictionAngle and real_dips[i] > max_slide:
+            if point_inside_polygon(poles_ext[i][0], poles_ext[i][1], polygon) and real_dips[i] >= FrictionAngle and real_dips[i] > max_slide:
                 Stability = 'Unstable'
                 max_slide = real_dips[i]
                 Mode = "Sliding on Joint {0}".format(Joints[i])
