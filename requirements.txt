@@ -4,7 +4,7 @@ scipy
 dash==1.18.1
 plotly==4.14.1
 dash_core_components==1.14.1
-Flask==1.1.2
-Flask-Compress==1.8.0
+Flask
+Flask-Compress
 gunicorn==20.0.4
 mplstereonet==0.6
