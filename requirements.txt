@@ -1,6 +1,6 @@
 dash_html_components==1.1.1
 numpy
-scipy==1.5.2
+scipy
 dash==1.18.1
 plotly==4.14.1
 dash_core_components==1.14.1
