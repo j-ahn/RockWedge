@@ -298,7 +298,7 @@ def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
     # Stereonet overlay settings
     ax.set_azimuth_ticks([0,90,180,270],labels=['N','E','S','W'])
     ax.grid(True, kind='polar')
-    plt.tight_layout()
+    #plt.tight_layout()
     
     # Shaded Area
     shaded_area = pole(j_inside_strikes, j_inside_dips)
