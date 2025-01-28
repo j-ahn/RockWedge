@@ -1,10 +1,10 @@
-dash_html_components==1.1.1
+dash_html_components
 numpy
 scipy
-dash==1.18.1
-plotly==4.14.1
-dash_core_components==1.14.1
+dash
+plotly
+dash_core_components
 Flask
 Flask-Compress
-gunicorn==20.0.4
-mplstereonet==0.6
+gunicorn
+mplstereonet
