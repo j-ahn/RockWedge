@@ -224,7 +224,7 @@ def stereoplot(Dip, DipDirection, FrictionAngle, figsize,):
     """
     # Figure settings
     plt.rcParams.update({'font.size': 12})
-    matplotlib.style.use('seaborn-whitegrid')
+    #matplotlib.style.use('seaborn-whitegrid')
     fig = plt.figure (figsize=figsize, dpi=100, facecolor='w', edgecolor='k')
     ax = fig.add_subplot(111, projection='stereonet')
     
