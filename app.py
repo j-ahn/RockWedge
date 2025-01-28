@@ -61,10 +61,11 @@ def alpha_shape(points, alpha, only_outer=True):
         edges.add((i, j))
 
     tri = Delaunay(points)
+
     edges = set()
     # Loop over triangles:
     # ia, ib, ic = indices of corner points of the triangle
-    for ia, ib, ic in tri.vertices:
+    for ia, ib, ic in tri.simplices:
         pa = points[ia]
         pb = points[ib]
         pc = points[ic]
